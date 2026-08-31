@@ -28,7 +28,11 @@ OBJS = \
   $K/sysfile.o \
   $K/kernelvec.o \
   $K/plic.o \
-  $K/virtio_disk.o
+  $K/th1520_smp.o \
+  $K/mem_disk.o \
+  fs.img.o
+
+# Upstream QEMU builds use $K/virtio_disk.o instead of the TH1520 memory disk.
 
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
@@ -153,6 +157,9 @@ UPROGS=\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
+
+fs.img.o: fs.img
+	$(OBJCOPY) -I binary -O elf64-littleriscv -B riscv fs.img fs.img.o
 
 -include kernel/*.d user/*.d
 

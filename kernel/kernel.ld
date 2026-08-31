@@ -42,4 +42,8 @@ SECTIONS
   }
 
   PROVIDE(end = .);
+
+  /DISCARD/ : {
+    *(.riscv.attributes)
+  }
 }

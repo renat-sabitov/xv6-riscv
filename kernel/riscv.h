@@ -229,6 +229,79 @@ w_menvcfg(uint64 x)
   asm volatile("csrw 0x30a, %0" : : "r"(x));
 }
 
+// C910 M-mode extension status register.
+#define MXSTATUS_CLINTEE (1L << 17) // enable supervisor CLINT interrupts
+#define MXSTATUS_MAEE    (1L << 21) // enable XTheadMae PTE attributes
+
+static inline uint64
+r_mxstatus()
+{
+  uint64 x;
+  asm volatile("csrr %0, 0x7c0" : "=r"(x));
+  return x;
+}
+
+static inline void
+w_mxstatus(uint64 x)
+{
+  asm volatile("csrw 0x7c0, %0" : : "r"(x));
+}
+
+// C910 M-mode snoop control register. A hart released from reset starts with
+// SMPEN clear; it must accept snoop requests before enabling its MMU or
+// participating in shared-memory synchronization.
+#define MSMPR_SMPEN (1L << 0)
+
+static inline uint64
+r_msmpr()
+{
+  uint64 x;
+  asm volatile("csrr %0, 0x7f3" : "=r"(x));
+  return x;
+}
+
+static inline void
+w_msmpr(uint64 x)
+{
+  asm volatile("csrw 0x7f3, %0" : : "r"(x));
+}
+
+static inline void
+w_mhcr(uint64 x)
+{
+  asm volatile("csrw 0x7c1, %0" : : "r"(x));
+}
+
+static inline void
+w_mcor(uint64 x)
+{
+  asm volatile("csrw 0x7c2, %0" : : "r"(x));
+}
+
+static inline void
+w_mccr2(uint64 x)
+{
+  asm volatile("csrw 0x7c3, %0" : : "r"(x));
+}
+
+static inline void
+w_mhint(uint64 x)
+{
+  asm volatile("csrw 0x7c5, %0" : : "r"(x));
+}
+
+static inline void
+w_mhint2(uint64 x)
+{
+  asm volatile("csrw 0x7cc, %0" : : "r"(x));
+}
+
+static inline void
+w_mhint4(uint64 x)
+{
+  asm volatile("csrw 0x7ce, %0" : : "r"(x));
+}
+
 // Physical Memory Protection
 static inline void
 w_pmpcfg0(uint64 x)
@@ -384,6 +457,39 @@ icache_fence()
 typedef uint64 pte_t;
 typedef uint64 *pagetable_t; // 512 PTEs
 
+static inline uint32
+readl(const volatile void *addr)
+{
+  uint32 value;
+
+  asm volatile("lw %0, 0(%1)" : "=r"(value) : "r"(addr));
+  asm volatile("fence i,r" ::: "memory");
+  return value;
+}
+
+static inline void
+writel_relaxed(uint32 value, volatile void *addr)
+{
+  asm volatile("sw %0, 0(%1)" : : "r"(value), "r"(addr));
+}
+
+static inline void
+writel(uint32 value, volatile void *addr)
+{
+  asm volatile("fence w,o" ::: "memory");
+  writel_relaxed(value, addr);
+}
+
+// The TH1520 CLINT exposes each 64-bit comparator as two 32-bit
+// registers. Keep the comparator safely in the future while updating it.
+static inline void
+timecmp_write32(volatile uint32 *addr, uint64 value)
+{
+  writel_relaxed(-1U, addr);
+  writel_relaxed((uint32)(value >> 32), addr + 1);
+  writel_relaxed((uint32)value, addr);
+}
+
 #endif // __ASSEMBLER__
 
 #define PGSIZE  4096 // bytes per page
@@ -397,13 +503,30 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE_W (1L << 2)
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // user can access
+#define PTE_A (1L << 6) // accessed
+#define PTE_D (1L << 7) // dirty
+
+// https://github.com/XUANTIE-RV/thead-extension-spec/blob/master/xtheadmae.adoc
+#define PTE_XMAE_SO (1UL << 63) // Strong order
+#define PTE_XMAE_C  (1UL << 62) // Cacheable
+#define PTE_XMAE_B  (1UL << 61) // Bufferable
+#define PTE_XMAE_T  (1UL << 60) // Trustable
+
+#define PTE_XMAE_MEM_C (PTE_XMAE_C|PTE_XMAE_B|PTE_XMAE_T)
+#define PTE_XMAE_DEV_NB (PTE_XMAE_SO|PTE_XMAE_T)
 
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)
+#define PTE_FLAGS_MASK (0x3FFUL | (0xFUL << 60))
+#define PTE2PA(pte) ((pte & ~PTE_FLAGS_MASK) << 2)
 
+#define PTE_FLAGS(pte) ((pte) & PTE_FLAGS_MASK)
+
+#if 0 // upstream standard Sv39 PTE helpers, without XTheadMae high flags
 #define PTE2PA(pte) (((pte) >> 10) << 12)
 
 #define PTE_FLAGS(pte) ((pte) & 0x3FF)
+#endif
 
 // extract the three 9-bit page table indices from a virtual address.
 #define PXMASK         0x1FF // 9 bits
@@ -415,3 +538,4 @@ typedef uint64 *pagetable_t; // 512 PTEs
 // Sv39, to avoid having to sign-extend virtual addresses
 // that have the high bit set.
 #define MAXVA (1L << (9 + 9 + 9 + 12 - 1))
+#define VAMASK (0x3FFFFFFFFF)

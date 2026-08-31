@@ -154,8 +154,8 @@ void            uartputc_sync(int);
 // vm.c
 void            kvminit(void);
 void            kvminithart(void);
-void            kvmmap(pagetable_t, uint64, uint64, uint64, int);
-int             mappages(pagetable_t, uint64, uint64, uint64, int);
+void            kvmmap(pagetable_t, uint64, uint64, uint64, uint64);
+int             mappages(pagetable_t, uint64, uint64, uint64, uint64);
 pagetable_t     uvmcreate(void);
 uint64          uvmalloc(pagetable_t, uint64, uint64, int);
 uint64          uvmdealloc(pagetable_t, uint64, uint64);
@@ -177,10 +177,17 @@ void            plicinithart(void);
 int             plic_claim(void);
 void            plic_complete(int);
 
+// th1520_smp.c
+int             th1520_hart_start(int, uint64);
+extern uint32   hart_boot_stage[];
+
 // virtio_disk.c
 void            virtio_disk_init(void);
 void            virtio_disk_rw(struct buf *, int);
 void            virtio_disk_intr(void);
+
+// mem_disk.c
+void            mem_disk_rw(struct buf *, int);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))

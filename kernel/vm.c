@@ -16,6 +16,7 @@ pagetable_t kernel_pagetable;
 extern char etext[]; // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+extern volatile uint64 uart_addr; // uart.c
 
 // Make a direct-map page table for the kernel.
 pagetable_t
@@ -27,6 +28,10 @@ kvmmake(void)
   memset(kpgtbl, 0, PGSIZE);
 
   // uart registers
+  kvmmap(kpgtbl, UART0_VIRT, UART0_PHYS, 0x1000,
+         PTE_R | PTE_W | PTE_XMAE_DEV_NB);
+
+#if 0 // upstream QEMU device mappings
   kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
 
   // virtio mmio disk interface
@@ -34,17 +39,29 @@ kvmmake(void)
 
   // PLIC
   kvmmap(kpgtbl, PLIC, PLIC, 0x4000000, PTE_R | PTE_W);
+#endif
+
+  // TH1520's 128 MB C910 interrupt-controller window. It contains both
+  // the PLIC and the CLINT timer comparators used after paging is enabled.
+  kvmmap(kpgtbl, PLIC, PLIC_PHYS, 0x8000000,
+         PTE_R | PTE_W | PTE_XMAE_DEV_NB);
+
+  // TH1520 clock, reset, and system-control registers used to release the
+  // three secondary C910 cores after global kernel initialization.
+  kvmmap(kpgtbl, TH1520_AP_CFG_VIRT, TH1520_AP_CLK_PHYS,
+         TH1520_AP_CFG_SIZE, PTE_R | PTE_W | PTE_XMAE_DEV_NB);
 
   // map kernel text executable and read-only.
-  kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext - KERNBASE, PTE_R | PTE_X);
+  kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext - KERNBASE,
+         PTE_R | PTE_X | PTE_XMAE_MEM_C);
 
   // map kernel data and the physical RAM we'll make use of.
   kvmmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP - (uint64)etext,
-         PTE_R | PTE_W);
+         PTE_R | PTE_W | PTE_XMAE_MEM_C);
 
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
-  kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X | PTE_XMAE_MEM_C);
 
   // allocate and map a kernel stack for each process.
   proc_mapstacks(kpgtbl);
@@ -56,7 +73,7 @@ kvmmake(void)
 // only used when booting.
 // does not flush TLB or enable paging.
 void
-kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
+kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, uint64 perm)
 {
   if (mappages(kpgtbl, va, sz, pa, perm) != 0)
     panic("kvmmap");
@@ -81,6 +98,9 @@ kvminithart()
 
   // flush stale entries from the TLB.
   sfence_vma();
+
+  // switch uart to virtual addressing
+  uart_addr = UART0_VIRT;
 }
 
 // Return the address of the PTE in page table pagetable
@@ -144,7 +164,7 @@ walkaddr(pagetable_t pagetable, uint64 va)
 // Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
 int
-mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, uint64 perm)
 {
   uint64 a, last;
   pte_t *pte;
@@ -165,7 +185,8 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
       return -1;
     if (*pte & PTE_V)
       panic("mappages: remap");
-    *pte = PA2PTE(pa) | perm | PTE_V;
+    // The C910 does not update accessed/dirty bits for this page-table mode.
+    *pte = PA2PTE(pa) | perm | PTE_V | PTE_A | PTE_D;
     if (a == last)
       break;
     a += PGSIZE;
@@ -231,8 +252,8 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       return 0;
     }
     memset(mem, 0, PGSIZE);
-    if (mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R | PTE_U | xperm) !=
-        0) {
+    if (mappages(pagetable, a, PGSIZE, (uint64)mem,
+                 PTE_R | PTE_U | xperm | PTE_XMAE_MEM_C) != 0) {
       kfree(mem);
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -300,7 +321,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
-  uint flags;
+  uint64 flags;
   char *mem;
 
   for (i = 0; i < sz; i += PGSIZE) {
@@ -470,7 +491,8 @@ vmfault(pagetable_t pagetable, uint64 psz, uint64 va, int read)
   if (mem == 0)
     return 0;
   memset((void *)mem, 0, PGSIZE);
-  if (mappages(pagetable, va, PGSIZE, mem, PTE_W | PTE_U | PTE_R) != 0) {
+  if (mappages(pagetable, va, PGSIZE, mem,
+               PTE_W | PTE_U | PTE_R | PTE_XMAE_MEM_C) != 0) {
     kfree((void *)mem);
     return 0;
   }

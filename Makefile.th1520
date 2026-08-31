@@ -1,0 +1,14 @@
+.DEFAULT_GOAL := deploy
+
+include Makefile
+
+TFTP_DIR ?= /srv/tftp
+TFTP_KERNEL ?= $(TFTP_DIR)/xv6.elf
+
+.PHONY: deploy
+deploy: $(TFTP_KERNEL)
+
+$(TFTP_KERNEL): $K/kernel
+	@test -d "$(TFTP_DIR)" || { echo "TFTP directory does not exist: $(TFTP_DIR)" >&2; exit 1; }
+	@test -w "$(TFTP_DIR)" || { echo "TFTP directory is not writable: $(TFTP_DIR)" >&2; exit 1; }
+	install -m 0644 $< $@

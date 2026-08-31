@@ -187,7 +187,7 @@ proc_pagetable(struct proc *p)
   // only the supervisor uses it, on the way
   // to/from user space, so not PTE_U.
   if (mappages(pagetable, TRAMPOLINE, PGSIZE, (uint64)trampoline,
-               PTE_R | PTE_X) < 0) {
+               PTE_R | PTE_X | PTE_XMAE_MEM_C) < 0) {
     uvmfree(pagetable, 0);
     return 0;
   }
@@ -195,7 +195,7 @@ proc_pagetable(struct proc *p)
   // map the trapframe page just below the trampoline page, for
   // trampoline.S.
   if (mappages(pagetable, TRAPFRAME, PGSIZE, (uint64)(p->trapframe),
-               PTE_R | PTE_W) < 0) {
+               PTE_R | PTE_W | PTE_XMAE_MEM_C) < 0) {
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
     uvmfree(pagetable, 0);
     return 0;
